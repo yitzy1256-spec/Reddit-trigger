@@ -33,6 +33,9 @@ const AUTO_CHECK_INTERVAL_MS = Math.max(parseInt(process.env.AUTO_CHECK_INTERVAL
 const ENABLE_HTTP_SERVER = process.env.ENABLE_HTTP_SERVER !== "false";
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const TRIGGER_SECRET = process.env.TRIGGER_SECRET || "";
+const RSS_MIN_REQUEST_INTERVAL_MS = Math.max(parseInt(process.env.RSS_MIN_REQUEST_INTERVAL_MS || "3000", 10), 0);
+const RSS_CACHE_TTL_MS = Math.max(parseInt(process.env.RSS_CACHE_TTL_MS || "300000", 10), 0);
+const REDDIT_RSS_USER_AGENT = process.env.REDDIT_RSS_USER_AGENT || "reddit-media-downloader/1.0";
 
 // Concurrent download limit
 const CONCURRENT_DOWNLOADS = 3;
@@ -47,6 +50,8 @@ let isProcessing = false;
 let tempFilesCreated = [];
 let lastTriggerStartedAt = null;
 let lastTriggerCompletedAt = null;
+let rssRequestQueue = Promise.resolve();
+const rssFeedCache = new Map();
 
 // User agents for rotation
 const USER_AGENTS = [
@@ -62,6 +67,9 @@ function getRandomUserAgent() {
 
 // ==================== UTILITY FUNCTIONS ====================
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function ensureTempDir() {
   if (!fs.existsSync(TEMP_DIR)) {
@@ -721,18 +729,129 @@ async function processMessage(parsed, messageUid) {
 
 // ==================== RSS & POST FUNCTIONS ====================
 
+function getRetryDelayMs(retryAfterHeader, attemptNumber) {
+  const retryAfterSeconds = parseInt(retryAfterHeader || "", 10);
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+    return retryAfterSeconds * 1000;
+  }
+
+  return Math.min(30000, RSS_MIN_REQUEST_INTERVAL_MS * Math.max(attemptNumber + 1, 1));
+}
+
+async function runQueuedRssRequest(task) {
+  const previousQueue = rssRequestQueue;
+  let releaseQueue;
+  rssRequestQueue = new Promise((resolve) => {
+    releaseQueue = resolve;
+  });
+
+  await previousQueue;
+
+  try {
+    return await task();
+  } finally {
+    if (RSS_MIN_REQUEST_INTERVAL_MS > 0) {
+      await sleep(RSS_MIN_REQUEST_INTERVAL_MS);
+    }
+    releaseQueue();
+  }
+}
+
+async function fetchSubredditRssXml(subreddit) {
+  const cacheKey = subreddit.toLowerCase();
+  const cachedFeed = rssFeedCache.get(cacheKey);
+  const now = Date.now();
+
+  if (cachedFeed?.xml && cachedFeed.expiresAt > now) {
+    return cachedFeed.xml;
+  }
+
+  if (cachedFeed?.promise) {
+    return cachedFeed.promise;
+  }
+
+  const requestPromise = runQueuedRssRequest(async () => {
+    let lastStatus = null;
+    let lastError = null;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const response = await axios.get(`https://www.reddit.com/r/${subreddit}/new/.rss`, {
+          headers: {
+            "User-Agent": REDDIT_RSS_USER_AGENT,
+            "Accept": "application/atom+xml,application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache"
+          },
+          timeout: 15000,
+          validateStatus: () => true
+        });
+
+        if (response.status >= 200 && response.status < 300 && typeof response.data === "string" && response.data.trim()) {
+          rssFeedCache.set(cacheKey, {
+            xml: response.data,
+            expiresAt: Date.now() + RSS_CACHE_TTL_MS
+          });
+          return response.data;
+        }
+
+        lastStatus = response.status;
+        lastError = new Error(`Request failed with status code ${response.status}`);
+
+        if (response.status === 429 && attempt < 2) {
+          const delayMs = getRetryDelayMs(response.headers["retry-after"], attempt);
+          console.warn(`RSS rate-limited for r/${subreddit}; retrying in ${delayMs}ms`);
+          await sleep(delayMs);
+          continue;
+        }
+
+        break;
+      } catch (error) {
+        lastError = error;
+
+        if (attempt < 2) {
+          const delayMs = getRetryDelayMs(null, attempt);
+          console.warn(`RSS fetch attempt ${attempt + 1} failed for r/${subreddit}; retrying in ${delayMs}ms`);
+          await sleep(delayMs);
+          continue;
+        }
+      }
+    }
+
+    if (lastStatus === 429) {
+      throw new Error(`Request failed with status code 429 for r/${subreddit}. Increase RSS pacing or reduce trigger bursts.`);
+    }
+
+    throw lastError || new Error(`Unable to fetch RSS feed for r/${subreddit}`);
+  });
+
+  rssFeedCache.set(cacheKey, {
+    xml: cachedFeed?.xml || null,
+    expiresAt: cachedFeed?.expiresAt || 0,
+    promise: requestPromise
+  });
+
+  try {
+    return await requestPromise;
+  } finally {
+    const currentCache = rssFeedCache.get(cacheKey);
+    if (currentCache?.promise === requestPromise) {
+      if (currentCache.xml && currentCache.expiresAt > Date.now()) {
+        rssFeedCache.set(cacheKey, {
+          xml: currentCache.xml,
+          expiresAt: currentCache.expiresAt
+        });
+      } else {
+        rssFeedCache.delete(cacheKey);
+      }
+    }
+  }
+}
+
 async function findLatestPostsRSS(subreddit, mediaTypeFilter = null, count = 1) {
   try {
-    const url = `https://www.reddit.com/r/${subreddit}/new/.rss`;
-
-    const response = await axios.get(url, {
-      headers: {
-        "User-Agent": getRandomUserAgent()
-      },
-      timeout: 10000
-    });
-
-    const xml = response.data;
+    const xml = await fetchSubredditRssXml(subreddit);
     const posts = [];
     const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
     let entryMatch;
@@ -898,6 +1017,9 @@ async function findLatestPostsRSS(subreddit, mediaTypeFilter = null, count = 1) 
 
       if (post) {
         posts.push(post);
+        if (posts.length >= count) {
+          break;
+        }
       }
     }
 
