@@ -820,7 +820,7 @@ async function runQueuedRssRequest(task) {
     return await task();
   } finally {
     if (RSS_MIN_REQUEST_INTERVAL_MS > 0) {
-      await sleep(RSS_MIN_REQUEST_INTERVAL_MS);
+      await sleep(RSS_MIN_REQUEST_INTERVAL_MS + Math.random() * 30000);
     }
     releaseQueue();
   }
@@ -869,11 +869,14 @@ async function fetchSubredditRssXml(subreddit) {
         lastError = new Error(`Request failed with status code ${response.status}`);
 
         if (response.status === 429 && attempt < 2) {
-          const delayMs = getRetryDelayMs(response.headers["retry-after"], attempt);
-          console.warn(`RSS rate-limited for r/${subreddit}; retrying in ${delayMs}ms`);
-          await sleep(delayMs);
-          continue;
-        }
+  const delayMs = Math.max(
+    getRetryDelayMs(response.headers["retry-after"], attempt),
+    60000  // minimum 60 seconds backoff
+  );
+  console.warn(`RSS rate-limited for r/${subreddit}; retrying in ${delayMs}ms`);
+  await sleep(delayMs);
+  continue;
+}
 
         break;
       } catch (error) {
