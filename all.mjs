@@ -247,6 +247,22 @@ function extractPostIdFromLink(link) {
   
   return crypto.createHash('md5').update(link).digest('hex').substring(0, 8);
 }
+function extractRedditLinks(text) {
+  const urlRegex = /(https?:\/\/(?:www\.)?reddit\.com\/r\/[A-Za-z0-9_]+\/comments\/[A-Za-z0-9_]+[^\s]*)/gi;
+  const shortRegex = /(https?:\/\/(?:v|i)\.redd\.it\/[A-Za-z0-9_]+[^\s]*)/gi;
+
+  const links = [];
+  let match;
+
+  while ((match = urlRegex.exec(text)) !== null) {
+    links.push(match[1]);
+  }
+  while ((match = shortRegex.exec(text)) !== null) {
+    links.push(match[1]);
+  }
+
+  return [...new Set(links)];
+}
 
 function updateSubredditTracking(subreddit, postIds) {
   const tracking = loadTracking();
@@ -711,22 +727,75 @@ async function processSubscription(subscription) {
 async function processMessage(parsed, messageUid) {
   try {
     const body = parsed.text || "";
-    console.log("Processing email with body:", body.substring(0, 100));
+    console.log("Processing email with body:", body.substring(0, 200));
 
+    // 1. Extract Reddit links
+    const links = extractRedditLinks(body);
+
+    if (links.length > 0) {
+      console.log(`Found ${links.length} Reddit link(s)`);
+
+      const attachments = [];
+
+      for (const link of links) {
+        const attachment = await downloadLimiter(() => processRedditLink(link));
+        if (attachment) attachments.push(attachment);
+      }
+
+      if (attachments.length > 0) {
+        await sendEmailsWithAttachments("reddit-links", attachments);
+      }
+
+      return messageUid;
+    }
+
+    // 2. Fallback to your existing command system
     const command = parseRequestCommand(body);
     if (!command || !command.subreddit) {
-      console.log("No subreddit found in email");
+      console.log("No subreddit or links found in email");
       return messageUid;
     }
 
     await handleParsedCommand(command);
     return messageUid;
+
   } catch (error) {
     console.error("Error in processMessage:", error.message);
     return messageUid;
   }
 }
+async function processRedditLink(url) {
+  // 1. Fetch the HTML
+  const response = await axios.get(url, {
+    headers: { "User-Agent": REDDIT_RSS_USER_AGENT }
+  });
 
+  const html = response.data;
+
+  // 2. Detect media
+  const videoMatch = html.match(/https:\/\/v\.redd\.it\/[A-Za-z0-9]+/);
+  const imageMatch = html.match(/https:\/\/i\.redd\.it\/[A-Za-z0-9]+\.(png|jpg|jpeg|gif)/i);
+
+  if (videoMatch) {
+    return await downloadAndPreparePost({
+      url: videoMatch[0],
+      title: "Reddit Video",
+      mediaType: "video",
+      id: crypto.randomUUID()
+    });
+  }
+
+  if (imageMatch) {
+    return await downloadAndPreparePost({
+      url: imageMatch[0],
+      title: "Reddit Image",
+      mediaType: imageMatch[1].toLowerCase(),
+      id: crypto.randomUUID()
+    });
+  }
+
+  return null;
+}
 // ==================== RSS & POST FUNCTIONS ====================
 
 function getRetryDelayMs(retryAfterHeader, attemptNumber) {
@@ -1031,22 +1100,18 @@ async function findLatestPostsRSS(subreddit, mediaTypeFilter = null, count = 1) 
 }
 
 function formatDate(dateString) {
-  try {
-    const dateObj = new Date(dateString);
-    return dateObj.toLocaleString("en-US", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      timeZoneName: "short"
-    });
-  } catch (e) {
-    return dateString;
-  }
-}
+  const date = new Date(dateString);
 
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true
+  }).format(date) + " EDT";
+}
 // ==================== VIDEO FUNCTIONS ====================
 
 async function getDashPlaylist(id) {
