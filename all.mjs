@@ -33,7 +33,7 @@ const AUTO_CHECK_INTERVAL_MS = Math.max(parseInt(process.env.AUTO_CHECK_INTERVAL
 const ENABLE_HTTP_SERVER = process.env.ENABLE_HTTP_SERVER !== "false";
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const TRIGGER_SECRET = process.env.TRIGGER_SECRET || "";
-const RSS_MIN_REQUEST_INTERVAL_MS = Math.max(parseInt(process.env.RSS_MIN_REQUEST_INTERVAL_MS || "3000", 10), 0);
+const RSS_MIN_REQUEST_INTERVAL_MS = Math.max(parseInt(process.env.RSS_MIN_REQUEST_INTERVAL_MS || "20000", 10), 0);
 const RSS_CACHE_TTL_MS = Math.max(parseInt(process.env.RSS_CACHE_TTL_MS || "300000", 10), 0);
 const REDDIT_RSS_USER_AGENT = process.env.REDDIT_RSS_USER_AGENT || "reddit-media-downloader/1.0";
 
