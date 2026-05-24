@@ -729,7 +729,7 @@ async function processMessage(parsed, messageUid) {
     const body = parsed.text || "";
     console.log("Processing email with body:", body.substring(0, 200));
 
-    // 1. Extract Reddit links
+    // 1. Extract Reddit links (full post URLs, v.redd.it, i.redd.it)
     const links = extractRedditLinks(body);
 
     if (links.length > 0) {
@@ -749,7 +749,7 @@ async function processMessage(parsed, messageUid) {
       return messageUid;
     }
 
-    // 2. Fallback to your existing command system
+    // 2. Fallback to your existing subreddit command system
     const command = parseRequestCommand(body);
     if (!command || !command.subreddit) {
       console.log("No subreddit or links found in email");
