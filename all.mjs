@@ -332,19 +332,19 @@ function addSubscription(subreddit, mediaTypeFilter = null, dailyPostLimit = 1) 
 
 function removeSubscription(subreddit, mediaTypeFilter = null) {
   const tracking = loadTracking();
-  const subscriptionKey = getSubscriptionKey(subreddit, mediaTypeFilter);
-  const originalCount = tracking.subscriptions.length;
+  const sub = subreddit.toLowerCase();
 
+  const before = tracking.subscriptions.length;
+
+  // Remove ALL subscriptions for this subreddit
   tracking.subscriptions = tracking.subscriptions.filter(
-    (subscription) => getSubscriptionKey(subscription.subreddit, subscription.mediaTypeFilter) !== subscriptionKey
+    (s) => s.subreddit.toLowerCase() !== sub
   );
 
-  if (tracking.subscriptions.length === originalCount) {
-    return { removed: false, reason: "not_found" };
-  }
+  const removed = before !== tracking.subscriptions.length;
+  if (removed) saveTracking(tracking);
 
-  saveTracking(tracking);
-  return { removed: true };
+  return { removed };
 }
 
 function getUtcDateKey(date = new Date()) {
