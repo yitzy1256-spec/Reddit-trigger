@@ -593,7 +593,10 @@ function parseRequestCommand(body) {
 }
 
 async function processSubredditRequest(subreddit, mediaTypeFilter = null, postCount = 1, fetchCount = null) {
-  const effectiveFetchCount = fetchCount || Math.max(postCount * 10, 10);
+  const effectiveFetchCount = Math.min(
+  Math.max(postCount * 3, 25),
+  100
+);
   const posts = await findLatestPostsRSS(subreddit, mediaTypeFilter, effectiveFetchCount);
 
   if (!posts || posts.length === 0) {
@@ -1663,12 +1666,32 @@ function startHttpServer() {
     res.json(buildStatusPayload());
   });
 
-  app.get("/trigger", async (req, res) => {
-    if (!isAuthorizedTrigger(req)) {
-      res.status(401).json({ ok: false, error: "unauthorized" });
-      return;
-    }
+app.get("/trigger", async (req, res) => {
+  if (!isAuthorizedTrigger(req)) {
+    res.status(401).json({ ok: false, error: "unauthorized" });
+    return;
+  }
 
+  // 🔥 CONCURRENCY LOCK
+  if (isProcessing) {
+    console.log("⚠️ Already processing — skipping /trigger");
+    res.json({ ok: false, reason: "already_processing" });
+    return;
+  }
+
+  isProcessing = true;
+  try {
+    lastTriggerStartedAt = new Date().toISOString();
+
+    const result = await runSubscriptionChecks();
+
+    lastTriggerCompletedAt = new Date().toISOString();
+    res.json({ ok: true, ...result });
+
+  } finally {
+    isProcessing = false;
+  }
+});
     const result = await processRedditLabel();
 
     res.json({
@@ -1684,6 +1707,27 @@ function startHttpServer() {
       res.status(401).json({ ok: false, error: "unauthorized" });
       return;
     }
+ // 🔥 CONCURRENCY LOCK
+  if (isProcessing) {
+    console.log("⚠️ Already processing — skipping /trigger");
+    res.json({ ok: false, reason: "already_processing" });
+    return;
+  }
+
+  isProcessing = true;
+  try {
+    lastTriggerStartedAt = new Date().toISOString();
+
+    const result = await runSubscriptionChecks();
+
+    lastTriggerCompletedAt = new Date().toISOString();
+    res.json({ ok: true, ...result });
+
+  } finally {
+    isProcessing = false;
+  }
+});
+
 
     const commandText = typeof req.body?.command === "string"
       ? req.body.command
@@ -1709,6 +1753,27 @@ function startHttpServer() {
       res.status(401).json({ ok: false, error: "unauthorized" });
       return;
     }
+ // 🔥 CONCURRENCY LOCK
+  if (isProcessing) {
+    console.log("⚠️ Already processing — skipping /trigger");
+    res.json({ ok: false, reason: "already_processing" });
+    return;
+  }
+
+  isProcessing = true;
+  try {
+    lastTriggerStartedAt = new Date().toISOString();
+
+    const result = await runSubscriptionChecks();
+
+    lastTriggerCompletedAt = new Date().toISOString();
+    res.json({ ok: true, ...result });
+
+  } finally {
+    isProcessing = false;
+  }
+});
+
 
     try {
       const result = await processRedditLabel();
