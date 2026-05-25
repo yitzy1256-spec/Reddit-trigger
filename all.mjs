@@ -1692,7 +1692,9 @@ app.get("/trigger", async (req, res) => {
     isProcessing = false;
   }
 });
-    const result = await processRedditLabel();
+    (async () => {
+  const result = await processRedditLabel();
+})();
 
     res.json({
       ok: true,
@@ -1776,7 +1778,9 @@ app.get("/trigger", async (req, res) => {
 
 
     try {
-      const result = await processRedditLabel();
+      (async () => {
+  const result = await processRedditLabel();
+})();
       res.json({ ok: true, result, status: buildStatusPayload() });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
