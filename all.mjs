@@ -874,7 +874,7 @@ async function fetchSubredditRssXml(subreddit) {
         if (response.status === 429 && attempt < 2) {
   const delayMs = Math.max(
     getRetryDelayMs(response.headers["retry-after"], attempt),
-    60000  // minimum 60 seconds backoff
+     120000   // 2 minutes minimum backoff
   );
   console.warn(`RSS rate-limited for r/${subreddit}; retrying in ${delayMs}ms`);
   await sleep(delayMs);
