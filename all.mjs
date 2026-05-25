@@ -1666,74 +1666,58 @@ function startHttpServer() {
     res.json(buildStatusPayload());
   });
 
-app.get("/trigger", async (req, res) => {
-  if (!isAuthorizedTrigger(req)) {
-    res.status(401).json({ ok: false, error: "unauthorized" });
-    return;
-  }
+  // ============================
+  // /trigger endpoint
+  // ============================
+  app.get("/trigger", async (req, res) => {
+    if (!isAuthorizedTrigger(req)) {
+      res.status(401).json({ ok: false, error: "unauthorized" });
+      return;
+    }
 
-  // 🔥 CONCURRENCY LOCK
-  if (isProcessing) {
-    console.log("⚠️ Already processing — skipping /trigger");
-    res.json({ ok: false, reason: "already_processing" });
-    return;
-  }
+    if (isProcessing) {
+      console.log("⚠️ Already processing — skipping /trigger");
+      res.json({ ok: false, reason: "already_processing" });
+      return;
+    }
 
-  isProcessing = true;
-  try {
-    lastTriggerStartedAt = new Date().toISOString();
+    isProcessing = true;
+    try {
+      lastTriggerStartedAt = new Date().toISOString();
+      const result = await runSubscriptionChecks();
+      lastTriggerCompletedAt = new Date().toISOString();
 
-    const result = await runSubscriptionChecks();
+      res.json({
+        ok: true,
+        message: "trigger_completed",
+        result,
+        status: buildStatusPayload()
+      });
 
-    lastTriggerCompletedAt = new Date().toISOString();
-    res.json({ ok: true, ...result });
-
-  } finally {
-    isProcessing = false;
-  }
-});
-    (async () => {
-  const result = await processRedditLabel();
-})();
-
-    res.json({
-      ok: true,
-      message: result.started ? "trigger_completed" : "trigger_skipped",
-      result,
-      status: buildStatusPayload()
-    });
+    } finally {
+      isProcessing = false;
+    }
   });
 
+  // ============================
+  // /command endpoint
+  // ============================
   app.post("/command", async (req, res) => {
     if (!isAuthorizedTrigger(req)) {
       res.status(401).json({ ok: false, error: "unauthorized" });
       return;
     }
- // 🔥 CONCURRENCY LOCK
-  if (isProcessing) {
-    console.log("⚠️ Already processing — skipping /trigger");
-    res.json({ ok: false, reason: "already_processing" });
-    return;
-  }
 
-  isProcessing = true;
-  try {
-    lastTriggerStartedAt = new Date().toISOString();
+    if (isProcessing) {
+      console.log("⚠️ Already processing — skipping /command");
+      res.json({ ok: false, reason: "already_processing" });
+      return;
+    }
 
-    const result = await runSubscriptionChecks();
-
-    lastTriggerCompletedAt = new Date().toISOString();
-    res.json({ ok: true, ...result });
-
-  } finally {
-    isProcessing = false;
-  }
-});
-
-
-    const commandText = typeof req.body?.command === "string"
-      ? req.body.command
-      : typeof req.body?.body === "string"
+    const commandText =
+      typeof req.body?.command === "string"
+        ? req.body.command
+        : typeof req.body?.body === "string"
         ? req.body.body
         : "";
 
@@ -1742,48 +1726,49 @@ app.get("/trigger", async (req, res) => {
       return;
     }
 
+    isProcessing = true;
     try {
       const result = await processCommandText(commandText);
       res.json({ ok: true, result, status: buildStatusPayload() });
+
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
+
+    } finally {
+      isProcessing = false;
     }
   });
 
+   // ============================
+  // /subscriptions/run endpoint
+  // ============================
   app.post("/subscriptions/run", async (req, res) => {
     if (!isAuthorizedTrigger(req)) {
       res.status(401).json({ ok: false, error: "unauthorized" });
       return;
     }
- // 🔥 CONCURRENCY LOCK
-  if (isProcessing) {
-    console.log("⚠️ Already processing — skipping /trigger");
-    res.json({ ok: false, reason: "already_processing" });
-    return;
-  }
 
-  isProcessing = true;
-  try {
-    lastTriggerStartedAt = new Date().toISOString();
+    if (isProcessing) {
+      console.log("⚠️ Already processing — skipping /subscriptions/run");
+      res.json({ ok: false, reason: "already_processing" });
+      return;
+    }
 
-    const result = await runSubscriptionChecks();
-
-    lastTriggerCompletedAt = new Date().toISOString();
-    res.json({ ok: true, ...result });
-
-  } finally {
-    isProcessing = false;
-  }
-});
-
-
+    isProcessing = true;
     try {
-      (async () => {
-  const result = await processRedditLabel();
-})();
-      res.json({ ok: true, result, status: buildStatusPayload() });
-    } catch (error) {
-      res.status(500).json({ ok: false, error: error.message });
+      lastTriggerStartedAt = new Date().toISOString();
+      const result = await runSubscriptionChecks();
+      lastTriggerCompletedAt = new Date().toISOString();
+
+      res.json({
+        ok: true,
+        message: "subscriptions_run_completed",
+        result,
+        status: buildStatusPayload()
+      });
+
+    } finally {
+      isProcessing = false;
     }
   });
 
@@ -1793,7 +1778,6 @@ app.get("/trigger", async (req, res) => {
     console.log("Trigger URL: /trigger");
   });
 }
-
 // ==================== MAIN ====================
 
 async function main() {
